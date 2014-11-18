@@ -141,6 +141,13 @@ void apsearch_usage(int detail)
 "  -popt PROG: Search for possible options of PROG that match WORD\n"
 "              Make sure you add the '-' to WORD if you are looking\n"
 "              for an actual option.\n"
+"  -sphinx_phelp PROG: Format the output of PROG -help in a sphinxized way.\n"
+"  -doc_2_txt: Format AFNI markups from  -file/-files/-stdin content for text\n"
+"              output.\n"
+"  -doc_2_spx: Format AFNI markups from  -file/-files/-stdin content for\n"
+"              Sphinx output.\n"
+"  -doc_markup_sample: Shown an example of the types of markups available for\n"
+"                      the documentation.\n"
 "  -all_afni_help: Search for WORD in all afni help files.\n"
 "                  This option is not all that clever at the moment.\n"
 "  -all_popts PROG: TRY to guess at all the options for PROG\n"
@@ -459,12 +466,11 @@ int main(int argc, char **argv)
    THD_string_array *sar = NULL;
    byte ci = 1;
    char *wild_list=NULL, **wglob=NULL, **wsort=NULL;
-   int nglob, nsort, *isrt=NULL, wild_noext=0, 
+   int nglob, nsort, *isrt=NULL, wild_noext=0, spx_tar = 0,
        wild_all_files = 0, wild_orig_name = 0, wild_ci=0;
    
 
    mainENTRY("apsearch main"); machdep() ; 
-      
    max_hits = 3;
    test_only=0;
    min_different_hits = -1;
@@ -598,6 +604,70 @@ int main(int argc, char **argv)
          continue; 
       }
 
+      if (strcmp(argv[iarg],"-has-h_raw") == 0) { 
+         char *s=NULL;
+         int ans;
+         
+         ++iarg;
+         if (iarg >= argc) {
+            fprintf( stderr,
+               "** Error: Need a program name after"
+               " -has-h_raw\n");
+            return(1);
+         }
+         ans = program_supports(argv[iarg], "-h_raw", NULL, 1);
+         fprintf(stdout, "%d\n", ans);
+         return(0);
+      }
+      
+      if (strcmp(argv[iarg],"-sphinx_phelp") == 0 ||
+          strcmp(argv[iarg],"-txt_phelp") == 0 ||
+          strcmp(argv[iarg],"-raw_phelp") == 0) { 
+         TFORM form=NO_FORMAT;
+         char *s=NULL;
+         ++iarg;
+         if (iarg >= argc) {
+            fprintf( stderr,
+               "** Error: Need a program name after"
+               " -sphinx_phelp/-txt_phelp/-raw_phelp\n");
+            return(1);
+         }
+         
+              if (strcmp(argv[iarg-1],"-txt_phelp") == 0) form = TXT;
+         else if (strcmp(argv[iarg-1],"-sphinx_phelp") == 0) form = SPX;
+         else if (strcmp(argv[iarg-1],"-raw_phelp") == 0) form = NO_FORMAT;
+         else {
+            ERROR_message("Who wrote this thing?!?");
+            return(1);
+         }
+         if ((s = format_prog_help(argv[iarg], form, 0))) {
+            fprintf(stdout, "%s", s);
+            free(s); s = NULL;
+         }
+         ++iarg;
+         return(0);
+         continue; 
+      }
+      
+      
+      
+      if (!strcmp(argv[iarg],"-doc_markup_sample")) {
+         SUMA_Sphinx_String_Edit_Help(NULL);
+         ++iarg;
+         return(0);
+         continue; 
+      }
+      
+      if (!strcmp(argv[iarg],"-doc_2_txt")) {
+         spx_tar = 1;
+         ++iarg; continue;
+      }
+      
+      if (!strcmp(argv[iarg],"-doc_2_spx")) {
+         spx_tar = 2;
+         ++iarg; continue;
+      }
+      
       if (strcmp(argv[iarg],"-files") == 0) { 
          ++iarg;
          if (iarg >= argc) {
@@ -798,6 +868,14 @@ int main(int argc, char **argv)
          continue; 
       }
       
+      if (strcmp(argv[iarg],"-C_prog_opt_array") == 0) {
+         progopt_C_array(NULL, 1);
+         return(0);
+         ++iarg; 
+         continue;
+      }
+      
+      
       if (strcmp(argv[iarg],"-bash") == 0) {
          shtp = 1;
          ++iarg; 
@@ -996,34 +1074,65 @@ int main(int argc, char **argv)
    }
    
    if ((fnamev || fname || text || prog || popt || all_popts)) {
-      if (!strcmp(word,"Ma fich haga")) {
+      if (!strcmp(word,"Ma fich haga") && !spx_tar) {
          ERROR_message(
             "I'd search the world over for you, if only you gave me -word");
          return 1;
       }
       if (fnamev) {
          fprintf(stderr,"Have %d files\n", fnamev->num);
-
-         sar = approx_str_sort_Ntfile(
-                     fnamev->ar, fnamev->num, word, ci, &ws_score,
-                            NULL,
-                            &D, 0, '\0');
-         ws = sar->ar; N_ws = sar->num;
+         if (spx_tar) {
+            for (i=0; i<fnamev->num; ++i) {
+               char *sso=SUMA_Sphinx_File_Edit(fnamev->ar[i], spx_tar-1, 0);
+               if (sso) {
+                  fprintf(stdout,"%s", sso); free(sso); sso = NULL;
+               } else {
+                  ERROR_message("Failed to sphinx edit string in %s", 
+                                 fnamev->ar[i]);
+                  return 1;
+               }
+            }
+            return 0;
+         } else {
+            sar = approx_str_sort_Ntfile(
+                        fnamev->ar, fnamev->num, word, ci, &ws_score,
+                               NULL,
+                               &D, 0, '\0');
+            ws = sar->ar; N_ws = sar->num;
+         }
       } else if (fname) {
          if (strcmp(fname,stdinflag)) {
-            ws = approx_str_sort_tfile(fname, &N_ws, word, 
+            if (spx_tar) {
+               char *sso=SUMA_Sphinx_File_Edit(fname, spx_tar-1, 0);
+               if (sso) {
+                  fprintf(stdout,"%s", sso); free(sso); sso = NULL;
+               } else {
+                  ERROR_message("Failed to sphinx edit string in %s", fname);
+                  return 1;
+               }
+               return 0;
+            } else {
+               ws = approx_str_sort_tfile(fname, &N_ws, word, 
                          ci, &ws_score,
                          NULL, &D, 1, '\0');
+            }
          } else {
             char *stdtext=NULL;
             if (!(stdtext = text_from_stdin(&N_ws))) {
                ERROR_message("Failed to read from stdin");
                return 0;
             }
-            ws = approx_str_sort_text(stdtext, &N_ws, word, 
-                            ci, &ws_score,
-                            NULL, &D, '\0'); 
-            free(stdtext); stdtext=NULL;
+            if (spx_tar) {
+               stdtext = SUMA_Sphinx_String_Edit(&stdtext, spx_tar-1, 0);
+               fprintf(stdout,"%s", stdtext);
+               free(stdtext); stdtext=NULL;
+               return 0;
+            } else {
+               ws = approx_str_sort_text(stdtext, &N_ws, word, 
+                               ci, &ws_score,
+                               NULL, &D, '\0');
+               free(stdtext); stdtext=NULL;
+            } 
          }
       } else if (text) {
          ws = approx_str_sort_text(text, &N_ws, word, 
