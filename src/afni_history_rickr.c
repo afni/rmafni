@@ -49,6 +49,21 @@
 
 afni_history_struct rickr_history[] = {
 
+ { 10,  Dec, 2014, RCR, "meica.py", MICRO, TYPE_BUG_FIX,
+   "fixed 3dTshift input in case of --no_despike",
+   "Thanks to M Plitt for the code fix."
+ } ,
+
+ {  2,  Dec, 2014, RCR, "afni_proc.py", MICRO, TYPE_BUG_FIX,
+   "-tlrc_NL_awpy_rm was not being applied",
+   NULL
+ } ,
+
+ {  2,  Dec, 2014, RCR, "afni-general", MINOR, TYPE_BUG_FIX,
+   "added floatscan to THD_load_nifti for case of double->float conversion",
+   "Thanks to M Gregory."
+ } ,
+
  { 25,  Nov, 2014, RCR, "afni_util.py", MICRO, TYPE_NEW_OPT,
    "added get_process_depth()",
    "sample use: afni_util.py -print 'get_process_depth()'"

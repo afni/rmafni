@@ -25,12 +25,12 @@ ContributeDocs.rst then from the command line::
    cd AFNI/doc/SphinxDocs
    make html
    
-For this to work, you will want to have `Sphinx
+For this to work, you will want to have Latex, `Sphinx
 <http://sphinx-doc.org>`_ installed, along with `fulltoc
-<http://sphinxcontrib-fulltoc.readthedocs.org/en/latest/install.html>`_. The
-easiest way to install SPHINX is with::
+<http://sphinxcontrib-fulltoc.readthedocs.org/en/latest/install.html>`_. An easy  way to install the Sphinx components would be with::
    
    sudo easy_install -U Sphinx
+   pip install sphinxcontrib-fulltoc
    
 After the build is finished, open :file:`_build/html/index.html` and
 browse from there on.
@@ -68,7 +68,7 @@ Also a breeze as in this example:
 
 .. figure:: media/suma_mni_n27.jpg
    :align: center
-   :figwidth: 70%
+   :figwidth: 50%
    
    A random picture here.
 
@@ -77,8 +77,9 @@ And a few more pictures together:
 .. figure:: media/suma_mni_n27_pry1.jpg
    :align: left
    :figwidth: 30%
+   :target: ../../_images/suma_mni_n27_pry1.jpg
 
-   Left aligned!
+   Left aligned! Click on picture to see it in full size. If you're reading the source, the target path is to the image file as copied by the make html process. Images are copied automatically to _build/html/_images/ so you need not make a copy but you have to set the relative path.
    
 .. figure:: media/suma_mni_n27_pry2.jpg
    :align: right

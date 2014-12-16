@@ -856,6 +856,8 @@ if( PRINT_TRACING ){
    newseq->set_orim  = 0 ;
    newseq->need_orim = 0 ;
 
+   newseq->last_automask = NULL ;          /* 12 Dec 2014 */
+
    newseq->saver_blowup = 1 ;
 
    newseq->given_xim = newseq->sized_xim
@@ -2710,7 +2712,7 @@ ENTRY("ISQ_short_to_rgb") ;
    06 Mar 2001 -- RWCox
 -------------------------------------------------------------------------*/
 
-MRI_IMAGE * ISQ_overlay( MCW_DC *dc, MRI_IMAGE *ulim, MRI_IMAGE *ovim, float alpha )
+MRI_IMAGE * ISQ_overlay( MCW_DC *dc , MRI_IMAGE *ulim, MRI_IMAGE *ovim, float alpha )
 {
    register int npix,ii,jj ;
    MRI_IMAGE *outim , *orim ;
@@ -2723,6 +2725,8 @@ ENTRY("ISQ_overlay") ;
    npix = ulim->nvox ;
 
    if( ovim->nvox != npix ) RETURN(NULL) ;
+
+   if( alpha > 1.0f ) alpha = 1.0f ;
 
    /*-- Case: both are short indices, no transparency --*/
 
@@ -2742,6 +2746,11 @@ ENTRY("ISQ_overlay") ;
    switch( ulim->kind ){              /* we always make a new RGB underlay,  */
      case MRI_rgb:                   /* since this will be the output image */
        outim = mri_copy(ulim) ;
+       our   = MRI_RGB_PTR(outim) ;
+     break ;
+
+     case MRI_rgba:
+       outim = mri_to_rgb(ulim) ;
        our   = MRI_RGB_PTR(outim) ;
      break ;
 
@@ -2765,6 +2774,22 @@ ENTRY("ISQ_overlay") ;
      case MRI_short:
        orim = ISQ_index_to_rgb( dc , 1 , ovim ) ;
        orr  = MRI_RGB_PTR(orim) ;
+     break ;
+
+     case MRI_rgba:{                                         /* 08 Dec 2014 */
+       rgba *ovar = MRI_RGBA_PTR(ovim) ; byte rr,gg,bb,aa ;
+       register float al=alpha , am,bm ;
+       for( jj=ii=0 ; ii < npix ; ii++,jj+=3 ){
+          rr = ovar[ii].r; gg = ovar[ii].g; bb = ovar[ii].b; aa = ovar[ii].a;
+          if( aa > 0 && (rr > 0 || gg > 0 || bb > 0 ) ){
+            am = aa*al/255.0f ; bm = 1.0f-am ;
+            our[jj  ] = am*rr + bm*our[jj  ] ;  /* mix colors */
+            our[jj+1] = am*gg + bm*our[jj+1] ;
+            our[jj+2] = am*bb + bm*our[jj+2] ;
+           }
+       }
+       RETURN(outim) ;
+     }
      break ;
    }
 
@@ -2894,6 +2919,57 @@ ENTRY("ISQ_make_bar") ;
    EXRETURN ;
 }
 
+/*------------------------------------------------------------------------*/
+void ISQ_apply_mask( MRI_IMAGE *maskim , MRI_IMAGE *iim )
+{
+   byte *mmm ; int ii , npix ;
+
+   if( maskim == NULL || maskim->kind != MRI_byte || iim == NULL ) return ;
+   npix = iim->nvox ;                   if( maskim->nvox != npix ) return ;
+   mmm = MRI_BYTE_PTR(maskim) ;                  if( mmm == NULL ) return ;
+
+   switch( iim->kind ){
+     case MRI_byte:{
+       byte *ar = mri_data_pointer(iim) ;
+       for( ii=0 ; ii < npix ; ii++ ) if( mmm[ii] == 0 ) ar[ii] = 0 ;
+     }
+     return ;
+
+     case MRI_short:{
+       short *ar = mri_data_pointer(iim) ;
+       for( ii=0 ; ii < npix ; ii++ ) if( mmm[ii] == 0 ) ar[ii] = 0 ;
+     }
+     return ;
+
+     case MRI_float:{
+       float *ar = mri_data_pointer(iim) ;
+       for( ii=0 ; ii < npix ; ii++ ) if( mmm[ii] == 0 ) ar[ii] = 0 ;
+     }
+     return ;
+
+     case MRI_rgb:{
+       byte *ar = mri_data_pointer(iim) ;
+       for( ii=0 ; ii < npix ; ii++ ) if( mmm[ii] == 0 ) ar[3*ii] = ar[3*ii+1] = ar[3*ii+2] = 0 ;
+     }
+     return ;
+
+     case MRI_rgba:{
+       rgba *ar = mri_data_pointer(iim) ;
+       for( ii=0 ; ii < npix ; ii++ ) if( mmm[ii] == 0 ) ar[ii].r = ar[ii].g = ar[ii].b = ar[ii].a = 0 ;
+     }
+     return ;
+
+     case MRI_complex:{
+       complex *ar = mri_data_pointer(iim) ;
+       for( ii=0 ; ii < npix ; ii++ ) if( mmm[ii] == 0 ) ar[ii].r = ar[ii].i = 0 ;
+     }
+     return ;
+   }
+
+   return ; /* should never be reached */
+}
+
+
 /*------------------------------------------------------------------------
    make the MRI_IMAGE and the XImage, given the sequence status:
      - if imim is NULL, get it from the user routine and process it,
@@ -3006,21 +3082,20 @@ ENTRY("ISQ_make_image") ;
      ovim = NULL ;
    } else {
      char *lab ;        /* 20 Sep 2001 */
+     byte *mmm=NULL ;   /* 12 Dec 2014 */
 
      ovim = seq->ovim ;
      if( ovim == NULL ){
         tim = ISQ_getoverlay( seq->im_nr , seq ) ;
-
         if( tim != NULL && !ISQ_GOOD_OVERLAY_TYPE(tim->kind) ){
           fprintf(stderr,"\a\n*** Illegal overlay image kind=%d! ***\n",(int)tim->kind) ;
           KILL_1MRI(tim) ;
         }
-
         if( tim != NULL )
           ovim = seq->ovim =
             mri_flippo( ISQ_TO_MRI_ROT(seq->opt.rot) , seq->opt.mirror , tim ) ;
-
         if( tim != ovim ) KILL_1MRI(tim) ;
+        ISQ_apply_mask( seq->last_automask , ovim ) ;
      }
 
      /*-- 19 Sep 2001: get an overlay plot, if there is one --*/
@@ -3061,41 +3136,10 @@ ENTRY("ISQ_make_image") ;
    /* overlay, if needed */
 
    if( ovim == NULL || ISQ_SKIP_OVERLAY(seq) ){          /* nothing to do */
-
       tim = im ;
-#if 1
    } else {                                                /* 06 Mar 2001 */
-
       tim = ISQ_overlay( seq->dc, im, ovim, seq->ov_opacity ) ;
       if( tim == NULL ) tim = im ;                    /* shouldn't happen */
-
-#else
-   } else if( im->kind == MRI_short ){                    /* the old case */
-      register short * tar , * oar , * iar ;
-      register int ii , npix = im->nx * im->ny ;
-
-      STATUS("overlaying onto 'im'") ;
-
-      tim = mri_new( im->nx , im->ny , MRI_short ) ;
-      tar = MRI_SHORT_PTR( tim ) ;                      /* merger   */
-      oar = MRI_SHORT_PTR( ovim ) ;                     /* overlay  */
-      iar = MRI_SHORT_PTR( im ) ;                       /* underlay */
-      for( ii=0 ; ii < npix ; ii++ )
-         tar[ii] = (oar[ii] == 0) ? iar[ii] : -oar[ii] ;
-
-   } else if( im->kind == MRI_rgb ){                       /* 11 Feb 1999 */
-      register int ii , npix = im->nx * im->ny ;
-      register short *oar = MRI_SHORT_PTR(ovim) ;
-      register byte *tar , *iar = MRI_RGB_PTR(im) ;
-      register Pixel *negpix = seq->dc->ovc->pix_ov ;
-
-      tim = mri_to_rgb( im ) ; tar = MRI_RGB_PTR(tim) ;
-
-      for( ii=0 ; ii < npix ; ii++ )
-        if( oar[ii] > 0 )
-          DC_pixel_to_rgb( seq->dc, negpix[oar[ii]],
-                           tar+(3*ii),tar+(3*ii+1),tar+(3*ii+2) ) ;
-#endif
    }
 
    /* convert result to XImage for display */
@@ -3661,7 +3705,7 @@ STATUS("call ISQ_perpoints") ;
    /** 14 Jun 2010: automask 2D image **/
 
    if( MCW_val_bbox(seq->wbar_amask_bbox) > 0 ){
-     byte *mmm = mri_automask_image2D(newim) ;
+     byte *mmm = mri_automask_image2D(newim) ; MRI_IMAGE *qim ;
      if( mmm != NULL ){
        int npix = newim->nx * newim->ny , ii ;
        switch( newim->kind ){
@@ -3679,8 +3723,17 @@ STATUS("call ISQ_perpoints") ;
              if( !mmm[ii] ) ar[3*ii] = ar[3*ii+1] = ar[3*ii+2] = 0 ;
          }
          break ;
-       }
+       } /* end of switch on newim->kind */
+       /* now save the automask for usage later (soon later) [12 Dec 2014] */
+       KILL_1MRI(seq->last_automask) ;
+       qim = mri_empty_conforming(newim,MRI_byte) ; mri_fix_data_pointer(mmm,qim) ;
+       seq->last_automask = mri_flippo( ISQ_TO_MRI_ROT(seq->opt.rot) , seq->opt.mirror , qim ) ;
+       if( qim != seq->last_automask ) mri_free(qim) ;
+     } else {
+       KILL_1MRI(seq->last_automask) ;
      }
+   } else {
+       KILL_1MRI(seq->last_automask) ;
    }
 
    /** Aug 31, 1995: put zer_color in at bottom, if nonzero **/
@@ -4141,6 +4194,7 @@ ENTRY("ISQ_saver_CB") ;
             if( tim != NULL )
               ovim = mri_flippo( ISQ_TO_MRI_ROT(seq->opt.rot), seq->opt.mirror, tim );
             if( tim != ovim ) KILL_1MRI(tim) ;
+            ISQ_apply_mask( seq->last_automask , ovim ) ;
          }
 
          /* and perform overlay onto flim */
@@ -4155,7 +4209,6 @@ ENTRY("ISQ_saver_CB") ;
          }
 
 /* INFO_message("AFNI_IMAGE_SAVESQUARE = %s",getenv("AFNI_IMAGE_SAVESQUARE")); */
-
          if( AFNI_yesenv("AFNI_IMAGE_SAVESQUARE") ){   /* 08 Jun 2004 */
            flim->dx = seq->last_dx ; flim->dy = seq->last_dy ;
            if( dbg ) fprintf(stderr,"  square-ize aspect ratio\n") ;
@@ -4481,22 +4534,16 @@ ENTRY("ISQ_saver_CB") ;
             if( tim != NULL )
               ovim = mri_flippo( ISQ_TO_MRI_ROT(seq->opt.rot), seq->opt.mirror, tim ) ;
             if( tim != ovim ) KILL_1MRI(tim) ;
+            ISQ_apply_mask( seq->last_automask , ovim ) ;
          }
 
          /* perform overlay onto flim [modified 07 Mar 2001] */
 
          if( ovim != NULL ){
-#if 1
             tim = flim ;
             flim = ISQ_overlay( seq->dc , tim , ovim , seq->ov_opacity ) ;
             if( flim == NULL ){ flim = tim ; }     /* shouldn't happen */
             else              { KILL_1MRI(tim) ; }
-#else
-            short *ovar ; int jj ;                /* the old way */
-            ovar = mri_data_pointer(ovim) ;
-            for( jj=0 ; jj < npix ; jj++ )
-               if( ovar[jj] != 0 ) flar[jj] = -ovar[jj] ;
-#endif
             mri_free( ovim ) ;
          }
 
@@ -4711,6 +4758,7 @@ ENTRY("ISQ_free_alldata") ;
    KILL_1MRI( seq->imim ) ;
    KILL_1MRI( seq->ovim ) ;
    KILL_1MRI( seq->orim ) ;  /* 30 Dec 1998 */
+   KILL_1MRI( seq->last_automask ) ; /* 12 Dec 2014 */
 
    KILL_2XIM( seq->given_xim  , seq->sized_xim  ) ;
    KILL_2XIM( seq->given_xbar , seq->sized_xbar ) ;
@@ -8758,6 +8806,7 @@ void ISQ_wbar_amask_CB( Widget w, XtPointer client_data, XtPointer call_data )
 {
    MCW_imseq *seq = (MCW_imseq *)client_data ;  /* 14 Jun 2010 */
 ENTRY("ISQ_wbar_amask_CB") ;
+   KILL_1MRI(seq->last_automask) ;
    if( ISQ_REALZ(seq) ) ISQ_redisplay( seq , -1 , isqDR_display ) ;
    EXRETURN ;
 }
@@ -9375,16 +9424,14 @@ ENTRY("ISQ_manufacture_one") ;
    if( ISQ_SKIP_OVERLAY(seq) ) RETURN( NULL );
 
    tim = ISQ_getoverlay( nim , seq ) ;
-
    if( tim == NULL ) RETURN( NULL );
-
    if( !ISQ_GOOD_OVERLAY_TYPE(tim->kind) ){
      fprintf(stderr,"\a\n*** Illegal overlay image kind=%d! ***\n",(int)tim->kind) ;
      mri_free(tim) ; RETURN( NULL );
    }
-
    ovim = mri_flippo( ISQ_TO_MRI_ROT(seq->opt.rot),seq->opt.mirror,tim ) ;
    if( tim != ovim ) mri_free(tim) ;
+   ISQ_apply_mask( seq->last_automask , ovim ) ;
    RETURN( ovim );
 }
 
@@ -9409,6 +9456,8 @@ void ISQ_make_montage( MCW_imseq *seq )
    int   isrgb ;
    int   isrgb_ov ;    /* 07 Mar 2001 */
    int   div=0 ;
+
+   rgba  gap_rgba ;    /* 09 Dec 2014 */
 
 ENTRY("ISQ_make_montage");
 
@@ -9597,14 +9646,16 @@ STATUS("Destroying underlay image array") ;
             tim = ISQ_manufacture_one( nim , 1 , seq ) ;
             ADDTO_IMARR(mar,tim) ;
             if( tim != NULL ){
-               nov++ ; isrgb_ov = isrgb_ov || tim->kind == MRI_rgb ;
+               nov++ ;
+                    if( tim->kind == MRI_rgb  && isrgb_ov == 0 ) isrgb_ov = 1 ;
+               else if( tim->kind == MRI_rgba                  ) isrgb_ov = 2 ;
             }
          }
          if( seq->mont_mode > 0 ){ div = 0; ISQ_set_deltival(seq,div); }
 
          /* 07 Mar 2001: deal with possible RGB overlays */
 
-         if( isrgb_ov ){
+         if( isrgb_ov == 1 ){
             for( ij=0 ; ij < nmont ; ij++ ){
                tim = IMARR_SUBIMAGE(mar,ij) ;
                if( tim != NULL && tim->kind != MRI_rgb ){
@@ -9619,14 +9670,33 @@ STATUS("Destroying underlay image array") ;
                   IMARR_SUBIMAGE(mar,ij) = qim ;
                }
             }
+         } else if( isrgb_ov == 2 ){                /* 09 Dec 2014 */
+           for( ij=0 ; ij < nmont ; ij++ ){
+             tim = IMARR_SUBIMAGE(mar,ij) ;
+             if( tim != NULL && tim->kind != MRI_rgba ){
+               MRI_IMAGE *qim , *zim ;
+
+               if( tim->kind == MRI_short ){
+                  zim = ISQ_index_to_rgb( seq->dc , 1 , tim ) ;
+                  qim = mri_to_rgba(zim) ; mri_free(zim) ;
+               } else {
+                  qim = mri_to_rgba(tim) ;
+               }
+
+               mri_free(tim) ; IMARR_SUBIMAGE(mar,ij) = qim ;
+             }
+           }
          }
 
-         if( isrgb_ov ){
+         if( isrgb_ov == 1 ){
             gap_rgb[0] = gap_rgb[1] = gap_rgb[2] = 0 ;
-            gapval = (void *) gap_rgb ;
+            gapval = (void *)gap_rgb ;
+         } else if( isrgb_ov == 2 ){     /* 09 Dec 2014 */
+            gap_rgba.r = gap_rgba.g = gap_rgba.b = gap_rgba.a = 0 ;
+            gapval = (void *)(&gap_rgba) ;
          } else {
             gap_ov = 0 ;
-            gapval = (void *) &gap_ov ;
+            gapval = (void *)(&gap_ov) ;
          }
 
          if( nov > 0 ){
@@ -9759,40 +9829,9 @@ STATUS("Destroying overlay image array") ;
 
    if( ovim == NULL || ISQ_SKIP_OVERLAY(seq) ){   /* no processing of overlay */
       tim = im ;
-
-#if 1                                  /** 07 Mar 2001 **/
    } else {
-
-      tim = ISQ_overlay( seq->dc, im, ovim, seq->ov_opacity ) ;
+      tim = ISQ_overlay( seq->dc , im, ovim, seq->ov_opacity ) ;
       if( tim == NULL ) tim = im ;     /* shouldn't happen */
-
-#else                                  /** the old way **/
-   } else if( im->kind == MRI_short ){            /* process overlay onto shorts */
-
-      register short *tar , *oar , *iar ;
-      register int ii , npix = im->nx * im->ny ;
-
-      tim = mri_new( im->nx , im->ny , MRI_short ) ;
-      tar = MRI_SHORT_PTR( tim ) ;
-      oar = MRI_SHORT_PTR( ovim ) ;
-      iar = MRI_SHORT_PTR( im ) ;
-      (void) memcpy( tar , iar , sizeof(short)*npix ) ; /* this code assumes   */
-      for( ii=0 ; ii < npix ; ii++ )                    /* that relatively few */
-         if( oar[ii] > 0 ) tar[ii] = -oar[ii] ;         /* pixels are overlaid */
-
-   } else if( im->kind == MRI_rgb ){                       /* 11 Feb 1999 */
-
-      register int ii , npix = im->nx * im->ny ;
-      register short *oar = MRI_SHORT_PTR(ovim) ;
-      register byte *tar , *iar = MRI_RGB_PTR(im) ;
-      register Pixel *negpix = seq->dc->ovc->pix_ov ;
-
-      tim = mri_to_rgb( im ) ; tar = MRI_RGB_PTR(tim) ;
-
-      for( ii=0 ; ii < npix ; ii++ )
-         if( oar[ii] > 0 )
-            DC_pixel_to_rgb( seq->dc, negpix[oar[ii]], tar+(3*ii),tar+(3*ii+1),tar+(3*ii+2) ) ;
-#endif
    }
 
    /*--- convert result to XImage for display ---*/
@@ -13046,15 +13085,14 @@ ENTRY("ISQ_handle_keypress") ;
 void mri_rgb_transform_nD( MRI_IMAGE *im, int ndim, generic_func *tfunc )
 {
    MRI_IMAGE *flim , *shim ;
-   byte  *iar ;
    float *sar , *far ;
    int ii , nvox , rr,gg,bb ;
    float fac , smax,fmax,fsrat ;
 
 ENTRY("mri_rgb_transform_nD") ;
 
-   if( im    == NULL || im->kind != MRI_rgb     ) EXRETURN ;  /* bad image? */
-   if( tfunc == NULL || (ndim !=0 && ndim != 2) ) EXRETURN ;  /* bad tfunc? */
+   if( im    == NULL || (im->kind != MRI_rgb && im->kind != MRI_rgba) ) EXRETURN ;  /* bad image? */
+   if( tfunc == NULL || (ndim !=0            && ndim != 2           ) ) EXRETURN ;  /* bad tfunc? */
 
    flim = mri_to_float( im ) ;              /* input intensity image */
    fmax = mri_max( flim ) ;
@@ -13080,22 +13118,42 @@ ENTRY("mri_rgb_transform_nD") ;
    if( smax == 0.0 ){ mri_free(flim); mri_free(shim); EXRETURN; }
    fsrat = fmax / smax ;
 
-   iar = MRI_BYTE_PTR(im) ;
    far = MRI_FLOAT_PTR(flim) ; sar = MRI_FLOAT_PTR(shim) ;
 
-   /* loop over pixels,
-      adjusting the color of each one by the transformed intensity */
+   /* loop over pixels, adjusting color of each one by transformed intensity */
 
-   nvox = im->nvox ;
-   for( ii=0 ; ii < nvox ; ii++ ){
-     if( far[ii] <= 0.0 || sar[ii] <= 0.0 ){       /* inten <= 0? */
-       iar[3*ii] = iar[3*ii+1] = iar[3*ii+2] = 0 ;
-     } else {
-       fac = fsrat * sar[ii] / far[ii] ; /* will be positive */
-       rr  = fac * iar[3*ii]   ; iar[3*ii  ] = (rr > 255) ? 255 : rr ;
-       gg  = fac * iar[3*ii+1] ; iar[3*ii+1] = (gg > 255) ? 255 : gg ;
-       bb  = fac * iar[3*ii+2] ; iar[3*ii+2] = (bb > 255) ? 255 : bb ;
+   switch( im->kind ){
+     case MRI_rgb:{
+       byte *iar = MRI_BYTE_PTR(im) ;
+       nvox = im->nvox ;
+       for( ii=0 ; ii < nvox ; ii++ ){
+         if( far[ii] <= 0.0 || sar[ii] <= 0.0 ){       /* inten <= 0? */
+           iar[3*ii] = iar[3*ii+1] = iar[3*ii+2] = 0 ;
+         } else {
+           fac = fsrat * sar[ii] / far[ii] ; /* will be positive */
+           rr  = fac * iar[3*ii]   ; iar[3*ii  ] = (rr > 255) ? 255 : rr ;
+           gg  = fac * iar[3*ii+1] ; iar[3*ii+1] = (gg > 255) ? 255 : gg ;
+           bb  = fac * iar[3*ii+2] ; iar[3*ii+2] = (bb > 255) ? 255 : bb ;
+         }
+       }
      }
+     break ;
+
+     case MRI_rgba:{
+       rgba *jar = MRI_RGBA_PTR(im) ;
+       nvox = im->nvox ;
+       for( ii=0 ; ii < nvox ; ii++ ){
+         if( far[ii] <= 0.0 || sar[ii] <= 0.0 ){       /* inten <= 0? */
+           jar[ii].r = jar[ii].g = jar[ii].b = 0 ;
+         } else {
+           fac = fsrat * sar[ii] / far[ii] ; /* will be positive */
+           rr  = fac * jar[ii].r ; jar[ii].r = (rr > 255) ? 255 : rr ;
+           gg  = fac * jar[ii].g ; jar[ii].g = (gg > 255) ? 255 : gg ;
+           bb  = fac * jar[ii].b ; jar[ii].b = (bb > 255) ? 255 : bb ;
+         }
+       }
+     }
+     break ;
    }
 
    mri_free(flim) ; mri_free(shim) ;  /* toss the trash */
@@ -13458,6 +13516,7 @@ ENTRY("ISQ_save_anim") ;
         if( tim != NULL )
          ovim = mri_flippo( ISQ_TO_MRI_ROT(seq->opt.rot), seq->opt.mirror, tim );
         if( tim != ovim ) KILL_1MRI(tim) ;
+        ISQ_apply_mask( seq->last_automask , ovim ) ;
       }
 
       /* and perform overlay onto flim */

@@ -7495,7 +7495,7 @@ void SUMA_cb_createSurfaceCont(Widget w, XtPointer data, XtPointer callData)
    SUMA_RETURNe;
 }
 
-SUMA_Boolean SUMA_WriteCont_Help(SUMA_DO_Types do_type, int targ, char *fname)
+SUMA_Boolean SUMA_WriteCont_Help(SUMA_DO_Types do_type, TFORM targ, char *fname)
 {
    static char FuncName[]={"SUMA_WriteCont_Help"};
    FILE *fout=NULL;
@@ -7504,8 +7504,20 @@ SUMA_Boolean SUMA_WriteCont_Help(SUMA_DO_Types do_type, int targ, char *fname)
    SUMA_ENTRY;
    
    if (!fname) {
-      if (targ == 0) fname = "SurfCont_help.txt";
-      else fname = "SurfCont_help.rst";
+      switch (targ) {
+         case NO_FORMAT:
+         case TXT:
+            fname = "SurfCont_help.txt";
+            break;
+         case ASPX:
+         case SPX:
+            fname = "SurfCont_help.rst";
+            break;
+         default:
+            SUMA_S_Warn("Unknown format of %d. Going with .txt",targ);
+            fname = "SurfCont_help.txt";
+            break;
+      }    
    }
    
    if (!(fout = fopen(fname,"w"))) {
@@ -11556,7 +11568,7 @@ SUMA_Boolean SUMA_Init_SurfCont_SurfParam_ADO(SUMA_ALL_DO *ado)
                }
                break; }
             case MASK_type: { /* Won't be used anymore, see below */
-               SUMA_MaskDO *mdo = (SUMA_MaskDO *)mdo;
+               SUMA_MaskDO *mdo = (SUMA_MaskDO *)ado;
                if (lbl30) { 
                   sprintf(slabel,"Current: %s\n ", lbl30); 
                   SUMA_free(lbl30); lbl30 = NULL;
