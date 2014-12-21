@@ -66,6 +66,11 @@
 afni_history_struct ptaylor_history[] = {
 /*=====BELOW THIS LINE=====*/
 
+{ 21, Dec , 2014 , PT , "3dTrackID" , MINOR , TYPE_GENERAL,
+   "Change of string output in .niml.dset.",
+   "Make the label match the ROI string labels.\n"
+},
+
 { 21, Dec , 2014 , PT , "3dNetCorr" , MINOR , TYPE_GENERAL,
    "Output NIML dset automatically.",
    "This allows users to view connectivity matrix info in SUMA easily.\n"
