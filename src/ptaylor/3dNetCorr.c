@@ -169,6 +169,9 @@ void usage_NetCorr(int detail)
 "                      Z~18.71;  hope that's good enough).\n"
 "                      Files are labelled WB_Z_ROI_001+orig, etc.\n"
 "\n"
+"    -ignore_LT       :switch to ignore any label table labels in the \n"
+"                      '-in_rois' file, if there are any labels attached.\n"
+"\n"
 "* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *\n"
 "\n"
 "  + EXAMPLE:\n"
@@ -246,7 +249,8 @@ int main(int argc, char *argv[]) {
    int Noutmat = 1;  // num of matr to output: start with CC for sure
    char **ParLab=NULL;
    int FM_ctr = 0;  // for counting through flatmatr entries
-
+   int OLD_LABEL=0; // ooollld style format of regions: Nnumber:Rnumber
+   int IGNORE_LT=0; // ignore label table
 
 
 
@@ -364,6 +368,16 @@ int main(int argc, char *argv[]) {
 
       if( strcmp(argv[iarg],"-ts_wb_Z") == 0) {
          TS_WBCORR_Z=1;
+         iarg++ ; continue ;
+      }
+
+      if( strcmp(argv[iarg],"-old_labels") == 0) {
+         OLD_LABEL=1;
+         iarg++ ; continue ;
+      }
+
+      if( strcmp(argv[iarg],"-ignore_LT") == 0) {
+         IGNORE_LT=1;
          iarg++ ; continue ;
       }
 
@@ -543,16 +557,21 @@ int main(int argc, char *argv[]) {
       }
 
       // Sept 2014:  Labeltable stuff
-      if ((ROIS->Label_Dtable = DSET_Label_Dtable(ROIS))) {
-         if ((LabTabStr = Dtable_to_nimlstring( DSET_Label_Dtable(ROIS),
-                                                "VALUE_LABEL_DTABLE"))) {
-            //fprintf(stdout,"%s", LabTabStr);
-            if (!(roi_dtable = Dtable_from_nimlstring(LabTabStr))) {
-               ERROR_exit("Could not parse labeltable.");
+      if( IGNORE_LT ) {
+         INFO_message("Ignoring any '-in_rois' label table (if there is one).");
+      }
+      else{
+         if ((ROIS->Label_Dtable = DSET_Label_Dtable(ROIS))) {
+            if ((LabTabStr = Dtable_to_nimlstring( DSET_Label_Dtable(ROIS),
+                                                   "VALUE_LABEL_DTABLE"))) {
+               //fprintf(stdout,"%s", LabTabStr);
+               if (!(roi_dtable = Dtable_from_nimlstring(LabTabStr))) {
+                  ERROR_exit("Could not parse labeltable.");
+               }
+            } 
+            else {
+               INFO_message("No label table from '-in_rois'.");
             }
-         } 
-         else {
-            INFO_message("No label table from '-in_rois'.");
          }
       }
 
@@ -734,8 +753,15 @@ int main(int argc, char *argv[]) {
       gdset_roi_names[i] = (char **)calloc(NROI_REF[i], sizeof(char *));
       for (j=0; j<NROI_REF[i]; ++j) {
          gdset_roi_names[i][j] = (char *)calloc(32, sizeof(char));
-         snprintf(gdset_roi_names[i][j],31,"N%03d:R%d", i, 
-                  ROI_LABELS_REF[i][j]);
+         if( OLD_LABEL )
+            snprintf(gdset_roi_names[i][j],31,"N%03d:R%d", i, 
+                     ROI_LABELS_REF[i][j]);
+         else{
+            snprintf(gdset_roi_names[i][j],31,"%s",
+                     ROI_STR_LABELS[i][j+1]);
+            //fprintf(stderr," %s ",
+            //       ROI_STR_LABELS[i][j+1]);
+         }
       }
    }
 
